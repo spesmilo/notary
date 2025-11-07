@@ -15,21 +15,22 @@ SimpleConfig.NOTARY_CSV_DELAY = ConfigVar('plugins.notary.csv_delay', default=14
 
 
 @plugin_command('wl', plugin_name)
-async def add_request(self: 'Commands', event_id:str, value: int, pubkey: str = None, signature: str = None, wallet: 'Abstract_Wallet' = None, plugin = None) -> List[dict]:
+async def add_request(self: 'Commands', event_id:str, value: int, nonce: str, pubkey: str = None, signature: str = None, wallet: 'Abstract_Wallet' = None, plugin = None) -> List[dict]:
     """Request notarization. This returns a lightning invoice.
     arg:str:event_id:nostr event id (hexadecimal)
     arg:int:value:amount to be burnt, in satoshis.
+    arg:str:nonce:unique nonce
     arg:str:pubkey:upvoter pubkey
     arg:str:signature:upvoter signature
     """
-    return plugin.notary.add_request(event_id, value, pubkey=pubkey, signature=signature)
+    return plugin.notary.add_request(event_id, value, nonce, pubkey=pubkey, signature=signature)
 
 @plugin_command('wl', plugin_name)
-async def get_proof(self: 'Commands', rhash: str, wallet: 'Abstract_Wallet' = None, plugin = None) -> List[dict]:
+async def get_proof(self: 'Commands', leaf_hash: str, wallet: 'Abstract_Wallet' = None, plugin = None) -> List[dict]:
     """Request proof of burn
-    arg:str:rhash:nostr event id
+    arg:str:leaf_hash:leaf_hash
     """
-    p = plugin.notary.get_proof(rhash)
+    p = plugin.notary.get_proof(leaf_hash)
     await plugin.notary.verify_proof(p)
     return p
 

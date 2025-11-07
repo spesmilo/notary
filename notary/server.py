@@ -48,9 +48,10 @@ class NotaryServer(Logger):
         try:
             event_id = params['event_id']
             value = int(params['value'])
+            nonce = params['nonce']
             pubkey = params.get('pubkey')
             signature = params.get('signature')
-            r = self.notary.add_request(event_id, value, pubkey=pubkey, signature=signature)
+            r = self.notary.add_request(event_id, value, nonce, pubkey=pubkey, signature=signature)
         except UserFacingException as e:
             return web.json_response({"error":str(e)})
         except Exception as e:

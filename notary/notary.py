@@ -71,8 +71,8 @@ def bytes_to_int(x: bytes) -> int:
 def node_hash(left_h, left_v:int, right_h, right_v:int):
     return sha256(b"Node:" + left_h + int_to_bytes(left_v) + right_h + int_to_bytes(right_v))
 
-def leaf_hash(event_id:str, value:int, rhash:bytes, pubkey:bytes):
-    return sha256(b"Leaf:" + bytes.fromhex(event_id) + int_to_bytes(value) + rhash + (pubkey if pubkey else b''))
+def leaf_hash(event_id:str, value:int, nonce:bytes, pubkey:bytes):
+    return sha256(b"Leaf:" + bytes.fromhex(event_id) + int_to_bytes(value) + nonce + (pubkey if pubkey else bytes(32)))
 
 def make_output_script(csv_delay: int) -> bytes:
     redeem_script = construct_script([csv_delay, opcodes.OP_CHECKSEQUENCEVERIFY, opcodes.OP_DROP, opcodes.OP_TRUE])
@@ -89,6 +89,7 @@ MIN_FEE = DUST_LIMIT_P2WSH
 @attr.s
 class NotarizationRequest(StoredObject):
     event_id  = attr.ib(type=str)
+    nonce     = attr.ib(type=bytes, converter=hex_to_bytes)
     rhash     = attr.ib(type=bytes, converter=hex_to_bytes)
     value     = attr.ib(type=int)
     pubkey    = attr.ib(type=bytes, converter=hex_to_bytes)
@@ -97,7 +98,7 @@ class NotarizationRequest(StoredObject):
     txids = attr.ib(type=str) # unconfirmed, sequence
 
     def leaf_hash(self):
-        return leaf_hash(self.event_id, self.value, self.rhash, self.pubkey)
+        return leaf_hash(self.event_id, self.value, self.nonce, self.pubkey)
 
 
 @attr.s
@@ -180,9 +181,9 @@ class Notary(Logger):
         self.config.WALLET_COIN_CHOOSER_OUTPUT_ROUNDING = False
         self.db = NotaryDB(self.config)
         self.requests = self.db.get_dict('requests')
-        self.proofs = self.db.get_dict('proofs')     # rhash -> txid -> proof
+        self.proofs = self.db.get_dict('proofs')     # leaf_hash -> txid -> proof
         self.roots = self.db.get_dict('roots')       # txid -> root_hash, root_value
-        self.mempool = self.db.get_dict('mempool')   # txid -> (rhashes, tx)
+        self.mempool = self.db.get_dict('mempool')   # txid -> (nonces, tx)
         print("mempool", list(self.mempool.keys()))
         xpub = self.wallet.keystore.get_master_public_key()  # type: str
         privkey = sha256('notary:' + xpub)
@@ -203,25 +204,27 @@ class Notary(Logger):
         else:
             return amount_sat // 8
 
-    def add_request(self, event_id: str, value:int, pubkey:str = None, signature:str = None):
-        if pubkey is not None:
-            pubkey = bytes.fromhex(pubkey)
-            signature = bytes.fromhex(signature)
-            ecc.verify_signature(pubkey, signature, 'Upvote:' + event_id + ':%d'%value)
-        # payment request for the notary
-        total_amount = value + self.notary_fee(value)
-        req_key = self.wallet.create_request(amount_sat=total_amount, exp_delay=3600, message=event_id, address=None)
-        payment_request = self.wallet.get_request(req_key)
-        assert payment_request.payment_hash == bytes.fromhex(req_key)
+    def add_request(self, event_id: str, value:int, nonce: str, pubkey:str = None, signature:str = None):
         request = NotarizationRequest(
             event_id       = event_id,
-            rhash          = payment_request.payment_hash,
+            nonce          = nonce,
+            rhash          = None,
             pubkey         = pubkey,
             signature      = signature,
             value          = value,
             confirmed_txid = None,
             txids          = "",
         )
+        leaf_hash = request.leaf_hash().hex()
+        if pubkey is not None:
+            pubkey = bytes.fromhex(pubkey)
+            signature = bytes.fromhex(signature)
+            ecc.verify_signature(pubkey, signature, leaf_hash)
+        # payment request for the notary
+        total_amount = value + self.notary_fee(value)
+        req_key = self.wallet.create_request(amount_sat=total_amount, exp_delay=3600, message=event_id, address=None)
+        payment_request = self.wallet.get_request(req_key)
+        request.rhash = payment_request.payment_hash
         self.requests[req_key] = request
         self.db.write()
         r = self.wallet.export_request(payment_request)
@@ -253,10 +256,10 @@ class Notary(Logger):
         """ return the burnt amount and number of confirmations """
         # 1. verify that the hash of the leaf is in the root of the tree
         event_id = proof["event_id"]
-        rhash = bytes.fromhex(proof["rhash"])
+        nonce = bytes.fromhex(proof["nonce"])
         pubkey = bytes.fromhex(proof.get("pubkey") or "")
         leaf_value = proof["leaf_value"]
-        leaf_h = leaf_hash(event_id, leaf_value, rhash, pubkey)
+        leaf_h = leaf_hash(event_id, leaf_value, nonce, pubkey)
         hashes = b''
         values = b''
         for x in proof["merkle_hashes"]:
@@ -339,7 +342,7 @@ class Notary(Logger):
         r["merkle_index"] = proof.index
         r["merkle_hashes"] = [h.hex()+':%d'%v for (h, v) in proof.get_hashes()]
         r["event_id"] = request.event_id
-        r["rhash"] = rhash_hex
+        r["nonce"] = request.nonce.hex()
         r["txid"] = txid
         r["leaf_value"] = request.value
         r["block_height"] = height
@@ -359,6 +362,7 @@ class Notary(Logger):
         if subsidy:
             r = NotarizationRequest(
                 event_id  = random.randbytes(32).hex(),
+                nonce     = random.randbytes(32),
                 rhash     = random.randbytes(32),
                 pubkey    = None,
                 signature = None,
