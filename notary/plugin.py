@@ -60,6 +60,7 @@ class NotaryPlugin(BasePlugin):
         jobs = [
             self.notary.run(),
             self.notary.publish_proofs(),
+            self.notary.retrieve_proofs(),
             self.server.run(),
         ]
         self.taskgroup = OldTaskGroup()

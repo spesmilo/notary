@@ -56,6 +56,14 @@ from electrum import constants
 
 from typing import TYPE_CHECKING, List, Dict
 
+
+NOSTR_KIND = 30021
+PROOF_VERSION = 0
+FAST_INTERVAL = 5
+SLOW_INTERVAL = 60
+MIN_FEE = DUST_LIMIT_P2WSH
+
+
 def round_up_division(a: int, b:int) -> int:
     return int(a // b) + (a % b > 0)
 
@@ -79,12 +87,6 @@ def make_output_script(csv_delay: int) -> bytes:
     address = redeem_script_to_address('p2wsh', redeem_script)
     scriptpubkey = address_to_script(address)
     return redeem_script, scriptpubkey
-
-
-PROOF_VERSION = 0
-FAST_INTERVAL = 5
-SLOW_INTERVAL = 60
-MIN_FEE = DUST_LIMIT_P2WSH
 
 @attr.s
 class NotarizationRequest(StoredObject):
@@ -171,6 +173,7 @@ class NotaryDB(JsonDB):
 
 
 
+
 class Notary(Logger):
 
     def __init__(self, config, wallet):
@@ -254,12 +257,20 @@ class Notary(Logger):
 
     async def verify_proof(self, proof) -> int:
         """ return the burnt amount and number of confirmations """
+
+        chain = proof.get("chain")
+        if chain and chain != constants.net.rev_genesis_bytes().hex():
+            raise UserFacingException('wrong chain')
         # 1. verify that the hash of the leaf is in the root of the tree
         event_id = proof["event_id"]
         nonce = bytes.fromhex(proof["nonce"])
-        pubkey = bytes.fromhex(proof.get("pubkey") or "")
+        upvoter_pubkey = bytes.fromhex(proof.get("upvoter_pubkey") or "")
         leaf_value = proof["leaf_value"]
-        leaf_h = leaf_hash(event_id, leaf_value, nonce, pubkey)
+        leaf_h = leaf_hash(event_id, leaf_value, nonce, upvoter_pubkey)
+        if upvoter_pubkey:
+            # todo: raise user facing exception
+            upvoter_signature = bytes.fromhex(proof["upvoter_signature"])
+            ecc.verify_signature(upvoter_pubkey, upvoter_signature, leaf_hash)
         hashes = b''
         values = b''
         for x in proof["merkle_hashes"]:
@@ -271,9 +282,10 @@ class Notary(Logger):
         root_hash, root_v = p.get_root(leaf_h, leaf_value)
         # 2. verify that the transaction is in the blockchain (or mempool if blockheight is 0)
         txid = proof["txid"]
-        tx = await self.wallet.network.get_transaction(txid)
-        if not tx:
-            raise UserFacingException("Transaction not found")
+        try:
+            tx = await self.wallet.network.get_transaction(txid)
+        except Exception as e:
+            raise UserFacingException(f"Transaction not found")
         _root_hash, csv_delay, txo, index, redeem_script = self.parse_tx(tx)
         if _root_hash != root_hash:
             raise UserFacingException('root mismatch')
@@ -347,8 +359,8 @@ class Notary(Logger):
         r["leaf_value"] = request.value
         r["block_height"] = height
         if request.pubkey:
-            r["pubkey"] = request.pubkey.hex()
-            r["signature"] = request.signature.hex()
+            r["upvoter_pubkey"] = request.pubkey.hex()
+            r["upvoter_signature"] = request.signature.hex()
         return r
 
     def create_tree(self, requests)-> Dict[int, dict]:
@@ -516,6 +528,7 @@ class Notary(Logger):
                     r.txids = "" # todo: cleanup db
                     requests.append(r)
                 break
+        self.db.write()
         return requests
 
     def create_tx(self, tree, csv_delay):
@@ -562,25 +575,66 @@ class Notary(Logger):
             root_h, root_value = tree.get_root()
             self.roots[txid] = root_h.hex(), root_value
 
+    def parse_tags(self, tags):
+        proof = {}
+        for tag in tags:
+            if tag[0] == 'e' and len(tag) == 2:
+                proof['event_id'] = tag[1]
+            if tag[0] == 'version' and len(tag) == 2:
+                proof['version'] = tag[1]
+            if tag[0] == 'n' and len(tag) == 7:
+                proof['txid'] = tag[1]
+                proof['block_height'] = int(tag[2])
+                proof['nonce'] = tag[3]
+                proof['leaf_value'] = int(tag[4])
+                proof['merkle_index'] = int(tag[5])
+                proof['merkle_hashes'] = tag[6].split(',')
+            if tag[0] == 'chain' and len(tag) == 2:
+                proof['chain'] = tag[1]
+            if tag[0] == 'u' and len(tag) == 3:
+                proof['pubkey'] = tag[1]
+                proof['signature'] = tag[2]
+        if 'nonce' not in proof:
+            return
+        return proof
+
     async def publish_proof(self, request, relay_manager):
         rhash_hex = request.rhash.hex()
-        proof = self.get_proof(rhash_hex)
-        json_proof = json.dumps(proof, cls=MyEncoder)
+        leaf_hash = request.leaf_hash().hex()
+        try:
+            proof = self.get_proof(rhash_hex)
+        except:
+            return
         # the first value of a single letter tag is indexed and can be filtered for
         tags = [
-            ['e', request.event_id],      # event id
-            ['p', request.pubkey],        # event pubkey
-            ['v', str(request.value)],  # upvote value in satoshis
-            ['expiration', str(int(time.time() + 60))], # only if unconfirmed
-            #['d', rhash_hex],
+            ['e', request.event_id],      # upvoted event id
+            ['d', leaf_hash],
+            ['version', str(proof["version"])],
+            ['n',
+             proof["txid"],
+             str(proof["block_height"]),
+             proof["nonce"],
+             str(proof["leaf_value"]),
+             str(proof["merkle_index"]),
+             ','.join(proof["merkle_hashes"])],
         ]
+        if proof.get("upvoter_pubkey"):
+            tags.append(['u', proof["upvoter_pubkey"], proof["upvoter_signature"]])
+        if request.pubkey: # should the requestor provide it?
+            tags.append(['p', request.pubkey])
+        if proof.get("chain"):
+            tags.append(['chain', proof['chain']])
+        if constants.net != constants.BitcoinMainnet:
+            tags.append(['expiration', str(int(time.time()) + 3600)])
+        print('publishing', tags)
         try:
             event_id = await aionostr._add_event(
                 relay_manager,
-                kind=30021, # addressable
+                kind=NOSTR_KIND,
                 tags=tags,
-                content=json_proof,
+                content="",
                 private_key=self.nostr_privkey)
+            self.logger.info(f"published proof: {rhash_hex}")
         except asyncio.TimeoutError as e:
             self.logger.info(f"failed to publish proof: {rhash_hex}")
             return
@@ -607,6 +661,27 @@ class Notary(Logger):
             while True:
                 request = await self.publish_queue.get()
                 await self.publish_proof(request, relay_manager)
+
+    @log_exceptions
+    async def retrieve_proofs(self):
+        async with self.nostr_manager() as relay_manager:
+            await relay_manager.connect()
+            query = {
+                "kinds": [NOSTR_KIND],
+                "limit": 1000,
+            }
+            async for event in relay_manager.get_events(query, single_event=False, only_stored=False):
+                try:
+                    proof = self.parse_tags(event.tags)
+                except:
+                    continue
+                if proof:
+                    try:
+                        v = await self.verify_proof(proof)
+                    except Exception as e:
+                        print(f'failed to verify proof {e} {proof["event_id"]}')
+                        continue
+                    print(f'verified proof {proof["event_id"]}')
 
     @log_exceptions
     async def run(self):
