@@ -18,12 +18,12 @@ if [[ -z "$3" ]] ; then
     request="{\"event_id\":\"$1\",\"value\":$2,\"nonce\":\"$nonce\"}"
 else
     event_id="$1"
-    value="$2"
+    value_sats="$2"
     privkey="$3"
-    r=$( $(dirname "$0")/sign_request.py $privkey $event_id $value $nonce)
+    r=$( $(dirname "$0")/sign_request.py $privkey $event_id $value_sats $nonce)
     signature=$(echo $r|jq -r '.signature')
     pubkey=$(echo $r|jq -r '.pubkey')
-    request="{\"event_id\":\"$1\",\"value\":$2,\"nonce\":\"$nonce\",\"upvoter_pubkey\":\"$pubkey\",\"upvoter_signature\":\"$signature\"}"
+    request="{\"event_id\":\"$1\",\"value_sats\":$2,\"nonce\":\"$nonce\",\"upvoter_pubkey\":\"$pubkey\",\"upvoter_signature\":\"$signature\"}"
 fi
 
 echo "your request"

@@ -72,6 +72,8 @@ def int_to_bytes(x: int) -> bytes:
     return x.to_bytes(8, 'big')
 
 def bytes_to_int(x: bytes) -> int:
+    # we use 8 bytes.
+    # this is enough for 21_000_000_00000000_000 millisats
     assert type(x) == bytes
     assert len(x) == 8
     return int.from_bytes(x, 'big')
@@ -79,8 +81,8 @@ def bytes_to_int(x: bytes) -> int:
 def node_hash(left_h, left_v:int, right_h, right_v:int) -> bytes:
     return sha256(b"Node:" + left_h + int_to_bytes(left_v) + right_h + int_to_bytes(right_v))
 
-def leaf_hash(event_id: bytes, value:int, nonce:bytes, pubkey:bytes) -> bytes:
-    return sha256(b"Leaf:" + event_id + int_to_bytes(value) + nonce + (pubkey if pubkey else bytes(32)))
+def leaf_hash(event_id: bytes, value_msats:int, nonce:bytes, pubkey:bytes) -> bytes:
+    return sha256(b"Leaf:" + event_id + int_to_bytes(value_msats) + nonce + (pubkey if pubkey else bytes(32)))
 
 def make_output_script(csv_delay: int) -> bytes:
     redeem_script = construct_script([csv_delay, opcodes.OP_CHECKSEQUENCEVERIFY, opcodes.OP_DROP, opcodes.OP_TRUE])
@@ -93,7 +95,7 @@ class NotarizationRequest(StoredObject):
     event_id          = attr.ib(type=bytes, converter=hex_to_bytes)
     event_pubkey      = attr.ib(type=bytes, converter=hex_to_bytes)
     nonce             = attr.ib(type=bytes, converter=hex_to_bytes)
-    value             = attr.ib(type=int)
+    value_msats       = attr.ib(type=int)
     upvoter_pubkey    = attr.ib(type=bytes, converter=hex_to_bytes)
     upvoter_signature = attr.ib(type=bytes, converter=hex_to_bytes)
     rhash             = attr.ib(type=bytes, converter=hex_to_bytes)
@@ -101,7 +103,7 @@ class NotarizationRequest(StoredObject):
     txids = attr.ib(type=str) # unconfirmed, sequence
 
     def leaf_hash(self):
-        return leaf_hash(self.event_id, self.value, self.nonce, self.upvoter_pubkey)
+        return leaf_hash(self.event_id, self.value_msats, self.nonce, self.upvoter_pubkey)
 
 
 @attr.s
@@ -117,7 +119,9 @@ class Proof(StoredObject):
             h = node_hash(h, v, h2, v2) if j%2 == 0 else node_hash(h2, v2, h, v)
             v += v2
             j = j >> 1
-        return h, v
+        value_sats = v // 1000
+        assert value_sats * 1000 == v
+        return h, value_sats
 
     def get_hashes(self) -> list:
         N = len(self.hashes)//32
@@ -219,11 +223,11 @@ class Notary(Logger):
         except Exception as e:
             raise UserFacingException('incorrect signature')
 
-    def add_request(self, event_id: bytes, value:int, nonce: bytes, event_pubkey:bytes = None, upvoter_pubkey: bytes=None, upvoter_signature:bytes = None):
+    def add_request(self, event_id: bytes, value_sats:int, nonce: bytes, event_pubkey:bytes = None, upvoter_pubkey: bytes=None, upvoter_signature:bytes = None):
         request = NotarizationRequest(
             event_id       = event_id,
             event_pubkey   = event_pubkey,
-            value          = value,
+            value_msats    = value_sats * 1000,
             nonce          = nonce,
             upvoter_pubkey     = upvoter_pubkey,
             upvoter_signature  = upvoter_signature,
@@ -235,7 +239,7 @@ class Notary(Logger):
         if upvoter_pubkey:
             self.verify_signature(leaf_h, upvoter_pubkey, upvoter_signature)
         # payment request for the notary
-        total_amount = value + self.notary_fee(value)
+        total_amount = value_sats + self.notary_fee(value_sats)
         req_key = self.wallet.create_request(amount_sat=total_amount, exp_delay=3600, message=leaf_h.hex(), address=None)
         payment_request = self.wallet.get_request(req_key)
         request.rhash = payment_request.payment_hash
@@ -366,7 +370,7 @@ class Notary(Logger):
         r["event_id"] = request.event_id.hex()
         r["nonce"] = request.nonce.hex()
         r["txid"] = txid
-        r["leaf_value"] = request.value
+        r["leaf_value"] = request.value_msats
         r["block_height"] = height
         if request.upvoter_pubkey:
             r["upvoter_pubkey"] = request.upvoter_pubkey.hex()
@@ -377,9 +381,9 @@ class Notary(Logger):
         """ build Merkle forest from requests """
         assert len(requests) > 0
         requests = requests[::] # copy, because we will side effect it
-        total_value = int(sum(r.value for r in requests))
+        total_value_msats = sum(r.value_msats for r in requests)
         # the fee of each request will be a power of two.
-        subsidy = max(0, MIN_FEE - total_value)
+        subsidy = max(0, (MIN_FEE*1000) - total_value_msats)
         # break the subsidy into powers of two
         if subsidy:
             r = NotarizationRequest(
@@ -389,22 +393,22 @@ class Notary(Logger):
                 event_pubkey  = None,
                 upvoter_pubkey    = None,
                 upvoter_signature = None,
-                value     = subsidy,
+                value_msats  = subsidy,
                 confirmed_txid = None,
                 txids      = "",
             )
             requests.append(r)
-        requests = sorted(requests, key=lambda x: -x.value)
+        requests = sorted(requests, key=lambda x: -x.value_msats)
         requests.reverse()
         # number of requests
         N = len(requests)
         # height of the tree
         K = (N-1).bit_length()
-        print(f"create_tree: {K=}, {N} requests, {total_value} sats. subsidy: {subsidy}")
+        print(f"create_tree: {K=}, {N} requests, {total_value_msats//1000} sats. subsidy: {subsidy//1000} sats")
         assert pow(2, K) - N >= 0
         # create array of leafs hashes
         _hashes = {} # height -> list of hashes
-        _hashes[K] = [(r.leaf_hash(), r.value) for r in requests]
+        _hashes[K] = [(r.leaf_hash(), r.value_msats) for r in requests]
         _hashes[K] += [(bytes(32), 0)] * (pow(2, K) - N)
 
         for k in range(K-1, -1, -1):
@@ -436,12 +440,11 @@ class Notary(Logger):
                 proof_v += int_to_bytes(v)
                 j = j >> 1
             assert j == 0
-            #print(f"found leaf {h.hex()} at {(k, i)}. index={index}, proof length={len(proof)}")
-            #print(f"proof: {[x.hex() for x in proof]}")
-            #assert h == root
             p = Proof(proof_hashes, proof_v, index)
             leaf_h, leaf_v = leaf
-            assert p.get_root(leaf_h, leaf_v) == (root_h, root_v)
+            p_hash, p_v = p.get_root(leaf_h, leaf_v)
+            assert p_hash == root_h
+            assert p_v * 1000 == root_v
             tree[(leaf_h, leaf_v)] = p
 
         return tree
@@ -455,13 +458,13 @@ class Notary(Logger):
         # filter out unpaid requests
         requests = list(filter(lambda x: self.wallet.lnworker.get_payment_status(x.rhash) == PR_PAID, requests))
         # sort by fee
-        requests = sorted(requests, key=lambda x: -x.value)
+        requests = sorted(requests, key=lambda x: -x.value_msats)
         new = [r for r in requests if len(r.txids) == 0]
         if not new:
             # nothing to do
             return
         # decide whether it is economical to wait more
-        notary_fees = sum([self.notary_fee(r.value) for r in new])
+        notary_fees = sum([self.notary_fee(r.value_msats//1000) for r in new])
         cost = 153
         r = min(notary_fees, cost)
         interval = (r * FAST_INTERVAL + (cost - r) * SLOW_INTERVAL) // cost
@@ -564,9 +567,8 @@ class Notary(Logger):
             self.logger.info(f"tx size: {vsize}; extra fee: {extra_fee}")
             fee_policy = FeePolicy('fixed:%d'%new_fee)
 
-        #value = sum([pow(2, k) for k in forest.keys()])
-        root_hash, value = tree.get_root()
-        tx = self.create_new_tx(coin, root_hash, value, fee_policy=fee_policy, csv_delay=csv_delay)
+        root_hash, value_sats = tree.get_root()
+        tx = self.create_new_tx(coin, root_hash, value_sats, fee_policy=fee_policy, csv_delay=csv_delay)
         return tx
 
     def save_proofs(self, tree, requests, txid, csv_delay):
@@ -574,7 +576,7 @@ class Notary(Logger):
         for rhash in indices:
             r = self.requests[rhash]
             leaf = r.leaf_hash()
-            value = r.value
+            value = r.value_msats
             # get proof from forest
             if (leaf, value) in tree:
                 proof = tree[(leaf, value)]
@@ -584,8 +586,8 @@ class Notary(Logger):
             if rhash not in self.proofs:
                 self.proofs[rhash] = {}
             self.proofs[rhash][txid] = proof
-            root_h, root_value = tree.get_root()
-            self.roots[txid] = root_h.hex(), root_value
+            root_h, root_value_sats = tree.get_root()
+            self.roots[txid] = root_h.hex(), root_value_sats
 
     def parse_tags(self, tags):
         proof = {}

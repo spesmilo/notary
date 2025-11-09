@@ -47,7 +47,7 @@ class NotaryServer(Logger):
         params = await request.json()
         try:
             event_id = bytes.fromhex(params['event_id'])
-            value = int(params['value'])
+            value_sats = int(params['value_sats'])
             nonce = bytes.fromhex(params['nonce'])
             upvoter_pubkey = bytes.fromhex(params.get('upvoter_pubkey', ''))
             upvoter_signature = bytes.fromhex(params.get('upvoter_signature', ''))
@@ -55,7 +55,7 @@ class NotaryServer(Logger):
             self.logger.info(f"{request}, {params}, {e}")
             raise web.HTTPUnsupportedMediaType()
         try:
-            r = self.notary.add_request(event_id, value, nonce, upvoter_pubkey=upvoter_pubkey, upvoter_signature=upvoter_signature)
+            r = self.notary.add_request(event_id, value_sats, nonce, upvoter_pubkey=upvoter_pubkey, upvoter_signature=upvoter_signature)
         except UserFacingException as e:
             return web.json_response({"error":str(e)})
         return web.json_response(r)
