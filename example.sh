@@ -3,8 +3,8 @@
 # this script sends a request to the notary and gets an invoice
 # once the invoice is paid, it gets a proof and asks the notary to verify it
 
-url=http://localhost:5455/api
-#url=https://swaps.electrum.org/notary
+#url=http://localhost:5455/api
+url=https://swaps.electrum.org/notary
 
 if [[ -z "$2" ]] ; then
     usage="usage: $0 event_id amount [privkey]"
