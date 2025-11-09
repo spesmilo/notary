@@ -56,7 +56,7 @@ from electrum import constants
 
 from typing import TYPE_CHECKING, List, Dict
 
-
+MAGIC_BYTES = '0021'
 NOSTR_KIND = 30021
 PROOF_VERSION = 0
 FAST_INTERVAL = 5
@@ -76,11 +76,11 @@ def bytes_to_int(x: bytes) -> int:
     assert len(x) == 8
     return int.from_bytes(x, 'big')
 
-def node_hash(left_h, left_v:int, right_h, right_v:int):
+def node_hash(left_h, left_v:int, right_h, right_v:int) -> bytes:
     return sha256(b"Node:" + left_h + int_to_bytes(left_v) + right_h + int_to_bytes(right_v))
 
-def leaf_hash(event_id:str, value:int, nonce:bytes, pubkey:bytes):
-    return sha256(b"Leaf:" + bytes.fromhex(event_id) + int_to_bytes(value) + nonce + (pubkey if pubkey else bytes(32)))
+def leaf_hash(event_id: bytes, value:int, nonce:bytes, pubkey:bytes) -> bytes:
+    return sha256(b"Leaf:" + event_id + int_to_bytes(value) + nonce + (pubkey if pubkey else bytes(32)))
 
 def make_output_script(csv_delay: int) -> bytes:
     redeem_script = construct_script([csv_delay, opcodes.OP_CHECKSEQUENCEVERIFY, opcodes.OP_DROP, opcodes.OP_TRUE])
@@ -90,17 +90,18 @@ def make_output_script(csv_delay: int) -> bytes:
 
 @attr.s
 class NotarizationRequest(StoredObject):
-    event_id  = attr.ib(type=str)
-    nonce     = attr.ib(type=bytes, converter=hex_to_bytes)
-    rhash     = attr.ib(type=bytes, converter=hex_to_bytes)
-    value     = attr.ib(type=int)
-    pubkey    = attr.ib(type=bytes, converter=hex_to_bytes)
-    signature = attr.ib(type=bytes, converter=hex_to_bytes)
-    confirmed_txid = attr.ib(type=bool)
+    event_id          = attr.ib(type=bytes, converter=hex_to_bytes)
+    event_pubkey      = attr.ib(type=bytes, converter=hex_to_bytes)
+    nonce             = attr.ib(type=bytes, converter=hex_to_bytes)
+    value             = attr.ib(type=int)
+    upvoter_pubkey    = attr.ib(type=bytes, converter=hex_to_bytes)
+    upvoter_signature = attr.ib(type=bytes, converter=hex_to_bytes)
+    rhash             = attr.ib(type=bytes, converter=hex_to_bytes)
+    confirmed_txid    = attr.ib(type=bool)
     txids = attr.ib(type=str) # unconfirmed, sequence
 
     def leaf_hash(self):
-        return leaf_hash(self.event_id, self.value, self.nonce, self.pubkey)
+        return leaf_hash(self.event_id, self.value, self.nonce, self.upvoter_pubkey)
 
 
 @attr.s
@@ -197,6 +198,7 @@ class Notary(Logger):
         self.publish_queue = asyncio.Queue()
         self.last_time = 0
 
+
     def notary_fee(self, amount_sat):
         if amount_sat <= 8:
             return amount_sat
@@ -207,25 +209,34 @@ class Notary(Logger):
         else:
             return amount_sat // 8
 
-    def add_request(self, event_id: str, value:int, nonce: str, pubkey:str = None, signature:str = None):
+    def verify_signature(self, leaf_h, upvoter_pubkey, upvoter_signature):
+        try:
+            pk = ecc.ECPubkey(b'\x02' + upvoter_pubkey)
+        except Exception as e:
+            raise UserFacingException('incorrect pubkey')
+        try:
+            pk.schnorr_verify(upvoter_signature, leaf_h)
+        except Exception as e:
+            raise UserFacingException('incorrect signature')
+
+    def add_request(self, event_id: bytes, value:int, nonce: bytes, event_pubkey:bytes = None, upvoter_pubkey: bytes=None, upvoter_signature:bytes = None):
         request = NotarizationRequest(
             event_id       = event_id,
-            nonce          = nonce,
-            rhash          = None,
-            pubkey         = pubkey,
-            signature      = signature,
+            event_pubkey   = event_pubkey,
             value          = value,
+            nonce          = nonce,
+            upvoter_pubkey     = upvoter_pubkey,
+            upvoter_signature  = upvoter_signature,
+            rhash          = None,
             confirmed_txid = None,
             txids          = "",
         )
-        leaf_hash = request.leaf_hash().hex()
-        if pubkey is not None:
-            pubkey = bytes.fromhex(pubkey)
-            signature = bytes.fromhex(signature)
-            ecc.verify_signature(pubkey, signature, leaf_hash)
+        leaf_h = request.leaf_hash()
+        if upvoter_pubkey:
+            self.verify_signature(leaf_h, upvoter_pubkey, upvoter_signature)
         # payment request for the notary
         total_amount = value + self.notary_fee(value)
-        req_key = self.wallet.create_request(amount_sat=total_amount, exp_delay=3600, message=event_id, address=None)
+        req_key = self.wallet.create_request(amount_sat=total_amount, exp_delay=3600, message=leaf_h.hex(), address=None)
         payment_request = self.wallet.get_request(req_key)
         request.rhash = payment_request.payment_hash
         self.requests[req_key] = request
@@ -241,9 +252,10 @@ class Notary(Logger):
         for txo in tx.outputs():
             if txo.scriptpubkey.startswith(bytes([opcodes.OP_RETURN])):
                 data = txo.scriptpubkey[2:]
-                root_hash = data[0:32]
-                csv_delay = bytes_to_int(data[32:])
-                break
+                if len(data) == 36 and data.startswith(bytes.fromhex(MAGIC_BYTES)):
+                    root_hash = data[2:34]
+                    csv_delay = int.from_bytes(data[34:], 'big')
+                    break
         else:
             raise Exception('op_return output not found')
 
@@ -257,20 +269,18 @@ class Notary(Logger):
 
     async def verify_proof(self, proof) -> int:
         """ return the burnt amount and number of confirmations """
-
         chain = proof.get("chain")
         if chain and chain != constants.net.rev_genesis_bytes().hex():
             raise UserFacingException('wrong chain')
         # 1. verify that the hash of the leaf is in the root of the tree
-        event_id = proof["event_id"]
+        event_id = bytes.fromhex(proof["event_id"])
         nonce = bytes.fromhex(proof["nonce"])
-        upvoter_pubkey = bytes.fromhex(proof.get("upvoter_pubkey") or "")
+        upvoter_pubkey = bytes.fromhex(proof.get("upvoter_pubkey", ''))
+        upvoter_signature = bytes.fromhex(proof.get("upvoter_signature", ''))
         leaf_value = proof["leaf_value"]
         leaf_h = leaf_hash(event_id, leaf_value, nonce, upvoter_pubkey)
         if upvoter_pubkey:
-            # todo: raise user facing exception
-            upvoter_signature = bytes.fromhex(proof["upvoter_signature"])
-            ecc.verify_signature(upvoter_pubkey, upvoter_signature, leaf_hash)
+            self.verify_signature(leaf_h, upvoter_pubkey, upvoter_signature)
         hashes = b''
         values = b''
         for x in proof["merkle_hashes"]:
@@ -353,14 +363,14 @@ class Notary(Logger):
         r["chain"] = constants.net.rev_genesis_bytes().hex()
         r["merkle_index"] = proof.index
         r["merkle_hashes"] = [h.hex()+':%d'%v for (h, v) in proof.get_hashes()]
-        r["event_id"] = request.event_id
+        r["event_id"] = request.event_id.hex()
         r["nonce"] = request.nonce.hex()
         r["txid"] = txid
         r["leaf_value"] = request.value
         r["block_height"] = height
-        if request.pubkey:
-            r["upvoter_pubkey"] = request.pubkey.hex()
-            r["upvoter_signature"] = request.signature.hex()
+        if request.upvoter_pubkey:
+            r["upvoter_pubkey"] = request.upvoter_pubkey.hex()
+            r["upvoter_signature"] = request.upvoter_signature.hex()
         return r
 
     def create_tree(self, requests)-> Dict[int, dict]:
@@ -376,8 +386,9 @@ class Notary(Logger):
                 event_id  = random.randbytes(32).hex(),
                 nonce     = random.randbytes(32),
                 rhash     = random.randbytes(32),
-                pubkey    = None,
-                signature = None,
+                event_pubkey  = None,
+                upvoter_pubkey    = None,
+                upvoter_signature = None,
                 value     = subsidy,
                 confirmed_txid = None,
                 txids      = "",
@@ -470,7 +481,8 @@ class Notary(Logger):
                 value=value,
             ),
             PartialTxOutput(
-                scriptpubkey=make_op_return(root_hash + int_to_bytes(csv_delay)),
+                scriptpubkey=make_op_return(
+                    bytes.fromhex(MAGIC_BYTES) + root_hash + csv_delay.to_bytes(2, 'big')),
                 value=0,
             ),
         ]
@@ -592,23 +604,23 @@ class Notary(Logger):
             if tag[0] == 'chain' and len(tag) == 2:
                 proof['chain'] = tag[1]
             if tag[0] == 'u' and len(tag) == 3:
-                proof['pubkey'] = tag[1]
-                proof['signature'] = tag[2]
+                proof['upvoter_pubkey'] = tag[1]
+                proof['upvoter_signature'] = tag[2]
         if 'nonce' not in proof:
             return
         return proof
 
     async def publish_proof(self, request, relay_manager):
         rhash_hex = request.rhash.hex()
-        leaf_hash = request.leaf_hash().hex()
+        leaf_h = request.leaf_hash()
         try:
             proof = self.get_proof(rhash_hex)
         except:
             return
         # the first value of a single letter tag is indexed and can be filtered for
         tags = [
-            ['e', request.event_id],      # upvoted event id
-            ['d', leaf_hash],
+            ['e', request.event_id.hex()],      # upvoted event id
+            ['d', leaf_h.hex()],
             ['version', str(proof["version"])],
             ['n',
              proof["txid"],
@@ -620,13 +632,13 @@ class Notary(Logger):
         ]
         if proof.get("upvoter_pubkey"):
             tags.append(['u', proof["upvoter_pubkey"], proof["upvoter_signature"]])
-        if request.pubkey: # should the requestor provide it?
-            tags.append(['p', request.pubkey])
+        if request.event_pubkey:
+            tags.append(['p', request.event_pubkey.hex()])
         if proof.get("chain"):
             tags.append(['chain', proof['chain']])
         if constants.net != constants.BitcoinMainnet:
             tags.append(['expiration', str(int(time.time()) + 3600)])
-        print('publishing', tags)
+        #print('publishing', tags)
         try:
             event_id = await aionostr._add_event(
                 relay_manager,
@@ -679,9 +691,9 @@ class Notary(Logger):
                     try:
                         v = await self.verify_proof(proof)
                     except Exception as e:
-                        print(f'failed to verify proof {e} {proof["event_id"]}')
+                        print(f'failed to verify proof {e} {proof["nonce"]}')
                         continue
-                    print(f'verified proof {proof["event_id"]}')
+                    print(f'verified proof {proof["nonce"]}')
 
     @log_exceptions
     async def run(self):

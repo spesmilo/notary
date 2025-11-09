@@ -46,17 +46,18 @@ class NotaryServer(Logger):
     async def add_request(self, request):
         params = await request.json()
         try:
-            event_id = params['event_id']
+            event_id = bytes.fromhex(params['event_id'])
             value = int(params['value'])
-            nonce = params['nonce']
-            pubkey = params.get('pubkey')
-            signature = params.get('signature')
-            r = self.notary.add_request(event_id, value, nonce, pubkey=pubkey, signature=signature)
-        except UserFacingException as e:
-            return web.json_response({"error":str(e)})
+            nonce = bytes.fromhex(params['nonce'])
+            upvoter_pubkey = bytes.fromhex(params.get('upvoter_pubkey', ''))
+            upvoter_signature = bytes.fromhex(params.get('upvoter_signature', ''))
         except Exception as e:
             self.logger.info(f"{request}, {params}, {e}")
             raise web.HTTPUnsupportedMediaType()
+        try:
+            r = self.notary.add_request(event_id, value, nonce, upvoter_pubkey=upvoter_pubkey, upvoter_signature=upvoter_signature)
+        except UserFacingException as e:
+            return web.json_response({"error":str(e)})
         return web.json_response(r)
 
     async def get_proof(self, request):
@@ -64,6 +65,7 @@ class NotaryServer(Logger):
         try:
             rhash = params['rhash']
             proof = self.notary.get_proof(rhash)
+            await self.notary.verify_proof(proof)
         except UserFacingException as e:
             return web.json_response({"error":str(e)})
         except Exception as e:
@@ -77,7 +79,7 @@ class NotaryServer(Logger):
             result = await self.notary.verify_proof(params)
         except UserFacingException as e:
             return web.json_response({"error":str(e)})
-        except Exception as e:
-            self.logger.info(f"{request}, {params}, {e}")
-            raise web.HTTPUnsupportedMediaType()
+        #except Exception as e:
+        #    self.logger.info(f"{request}, {params}, {e}")
+        #    raise web.HTTPUnsupportedMediaType()
         return web.json_response(result)
