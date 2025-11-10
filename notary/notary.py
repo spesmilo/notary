@@ -57,7 +57,7 @@ from electrum import constants
 from typing import TYPE_CHECKING, List, Dict
 
 MAGIC_BYTES = '0021'
-NOSTR_KIND = 30021
+KIND_UPVOTING_EVENT = 30021
 PROOF_VERSION = 0
 FAST_INTERVAL = 5
 SLOW_INTERVAL = 60
@@ -644,7 +644,7 @@ class Notary(Logger):
         try:
             event_id = await aionostr._add_event(
                 relay_manager,
-                kind=NOSTR_KIND,
+                kind=KIND_UPVOTING_EVENT,
                 tags=tags,
                 content="",
                 private_key=self.nostr_privkey)
@@ -681,7 +681,7 @@ class Notary(Logger):
         async with self.nostr_manager() as relay_manager:
             await relay_manager.connect()
             query = {
-                "kinds": [NOSTR_KIND],
+                "kinds": [KIND_UPVOTING_EVENT],
                 "limit": 1000,
             }
             async for event in relay_manager.get_events(query, single_event=False, only_stored=False):
