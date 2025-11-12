@@ -15,7 +15,7 @@ fi
 nonce=$(hexdump -n32 -e '16/1 "%02x"' /dev/urandom)
 
 if [[ -z "$3" ]] ; then
-    request="{\"event_id\":\"$1\",\"value\":$2,\"nonce\":\"$nonce\"}"
+    request="{\"event_id\":\"$1\",\"value_sats\":$2,\"nonce\":\"$nonce\"}"
 else
     event_id="$1"
     value_sats="$2"
