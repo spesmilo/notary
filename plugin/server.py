@@ -57,7 +57,8 @@ class NotaryServer(Logger):
         try:
             r = self.notary.add_request(event_id, value_sats, nonce, upvoter_pubkey=upvoter_pubkey, upvoter_signature=upvoter_signature)
         except UserFacingException as e:
-            return web.json_response({"error":str(e)})
+            self.logger.info(f"{request}, {params}, {e}")
+            return web.json_response({"error":"{str(e)}"})
         return web.json_response(r)
 
     async def get_proof(self, request):
