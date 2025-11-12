@@ -1,6 +1,13 @@
+Proof-of-burn for Nostr Events
+==============================
 
-whitepaper: notary.pdf
+This repo contains an Electrum plugin that creates proof-of-burn for Nostr Events
 
-electrum plugin: plugin
+See [example.sh](example.sh) for a bash script that does RPCs to the notary
 
-see example.sh for a bash script that calls the notary
+
+Resources
+=========
+
+[Whitepaper](notary.pdf)
+
