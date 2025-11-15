@@ -17,7 +17,7 @@
   <body>
     <div style="width:30em; margin:auto;">
       <h3>Request Proof-of-burn</h3>
-      <form method=POST action=/api/request>
+      <form method=POST action=/notary/request>
 	<input type="text" name="event_id" placeholder="nostr event ID" pattern="[0-9a-fA-F]{64}" title="32 bytes hexadecimal"><br>
 	<input type="number" min="1" name="value_sats" placeholder="amount to burn (satoshis)"><br/>
 	<input type='hidden' id='nonce' name='nonce' value='5' />

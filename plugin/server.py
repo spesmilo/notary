@@ -36,12 +36,11 @@ class NotaryServer(Logger):
     async def run(self):
         self.root = '/r'
         app = web.Application()
-        app.add_routes([web.post('/api/get_proof', self.get_proof)])
-        app.add_routes([web.post('/api/verify_proof', self.verify_proof)])
-        app.add_routes([web.post('/api/add_request', self.add_request)])
-        
-        app.add_routes([web.post('/api/request', self.new_request)]) # http
-        app.add_routes([web.get('/api/get_status', self.get_status)]) # wss
+        app.add_routes([web.post(self.root + '/api/get_proof', self.get_proof)])
+        app.add_routes([web.post(self.root + '/api/verify_proof', self.verify_proof)])
+        app.add_routes([web.post(self.root + '/api/add_request', self.add_request)])
+        app.add_routes([web.post(self.root + '/request', self.new_request)]) # http
+        app.add_routes([web.get(self.root + '/get_status', self.get_status)]) # wss
         app.add_routes([web.static(self.root, self.WWW_DIR)])
         runner = web.AppRunner(app)
         await runner.setup()
@@ -103,7 +102,7 @@ class NotaryServer(Logger):
         self.logger.info(f"{request}, {params}")
         r = self.notary.add_request(event_id, value_sats, nonce)
         rhash = r['rhash']
-        raise web.HTTPFound(self.root + '/status?rhash=' + rhash)
+        raise web.HTTPFound('/notary/status?rhash=' + rhash)
 
     async def get_status(self, request):
         print("get_status", request)
