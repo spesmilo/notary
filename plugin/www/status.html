@@ -100,9 +100,9 @@ function getUrlParameter(sParam)
 var rhash = getUrlParameter('rhash');
       
 if (rhash) {
-    $("#frame").attr('src', "http://localhost:8080/r/pay?id=" +  rhash);
-
     var wss_address = (document.URL.startsWith("https") ? "wss" : "ws") + "://" + window.location.host +"/api/get_status?" + rhash;
+    var payserver_address = (document.URL.startsWith("https") ? "https" : "http") + "://" + window.location.host +"/payserver/pay?id=" + rhash;
+    $("#frame").attr('src', payserver_address);
     console.log("Opening WSS: " + wss_address);
     var ws = new WebSocket(wss_address);
     var received_msg;
