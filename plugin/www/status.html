@@ -75,7 +75,8 @@
 </head>
 <body>
   <div style="width:50em; margin:auto; font-family:arial, serif;">
-    <h3>Proof-of-burn request status</h3>
+    <h3>Proof-of-burn status</h3>
+      <div id="rhash"></div>
       <div id="status"></div>
       <iframe id="frame" height="900" width="500" hidden="true" frameBorder="0"></iframe>
       <pre id="proof" hidden="true"></pre>
@@ -99,6 +100,7 @@ function getUrlParameter(sParam)
 var rhash = getUrlParameter('rhash');
 
 if (rhash) {
+    $("#rhash").text('rhash: ' + rhash);
     var wss_address = (document.URL.startsWith("https") ? "wss" : "ws") + "://" + window.location.host +"/notary/get_status?" + rhash;
     var payserver_address = (document.URL.startsWith("https") ? "https" : "http") + "://" + window.location.host +"/payserver/pay?id=" + rhash;
     $("#frame").attr('src', payserver_address);
