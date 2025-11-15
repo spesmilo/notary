@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <style type="text/css">
+      body {
+	  font-family: Arial;
+      }
+      form {
+      }
+      input {
+	  border: 2px solid #ccc;
+	  padding: 12px 20px;
+      }
+  </style>
+  </head>
+  <body>
+    <div style="width:30em; margin:auto;">
+      <h3>Request Proof-of-burn</h3>
+      <form method=POST action=/api/request>
+	<input type="text" name="event_id" placeholder="nostr event ID" pattern="[0-9a-fA-F]{64}" title="32 bytes hexadecimal"><br>
+	<input type="number" min="1" name="value_sats" placeholder="amount to burn (satoshis)"><br/>
+	<input type='hidden' id='nonce' name='nonce' value='5' />
+	<input type="submit" value="Create invoice">
+      </form>
+      <h3>What is this?</h3>
+      <p>This page lets you create Proof-of-burn for Nostr events.  It
+	sends a request to a notary, who will return a Lightning
+	invoice for the requested amount to burn (plus notary fees).
+	Once the invoice is paid, the notary will add the event ID to
+	a Merkle Sum tree, and commit the root hash to the Bitcoin
+	blockchain.
+      </p>
+      <p>
+	Read the <a href="proof-of-burn.pdf">whitepaper</a> for more information.
+      </p>
+    </div>
+  </body>
+  <script type="text/javascript">
+    var nonce=Array.from(crypto.getRandomValues(new Uint8Array(32)))
+	.map(b => b.toString(16).padStart(2, '0')).join('');
+    document.getElementById('nonce').value = nonce;
+  </script>
+</html>

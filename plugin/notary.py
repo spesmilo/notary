@@ -63,6 +63,9 @@ FAST_INTERVAL = 5
 SLOW_INTERVAL = 60
 MIN_FEE = DUST_LIMIT_P2WSH
 
+class WaitingForPayment(UserFacingException):
+    def __str__(self):
+        return "Waiting for payment"
 
 def round_up_division(a: int, b:int) -> int:
     return int(a // b) + (a % b > 0)
@@ -240,7 +243,7 @@ class Notary(Logger):
             self.verify_signature(leaf_h, upvoter_pubkey, upvoter_signature)
         # payment request for the notary
         total_amount = value_sats + self.notary_fee(value_sats)
-        req_key = self.wallet.create_request(amount_sat=total_amount, exp_delay=3600, message=leaf_h.hex(), address=None)
+        req_key = self.wallet.create_request(amount_sat=total_amount, exp_delay=3600, message="Proof-of-burn", address=None)
         payment_request = self.wallet.get_request(req_key)
         request.rhash = payment_request.payment_hash
         self.requests[req_key] = request
@@ -349,7 +352,7 @@ class Notary(Logger):
         except KeyError:
             raise UserFacingException("Request not found")
         if self.wallet.lnworker.get_payment_status(request.rhash) != PR_PAID:
-            raise UserFacingException("Waiting for payment")
+            raise WaitingForPayment()
         txid = request.confirmed_txid
         if not txid and request.txids:
             txid = request.txids[-64:]
