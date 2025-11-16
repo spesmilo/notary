@@ -102,7 +102,7 @@ class NotaryServer(Logger):
         self.logger.info(f"{request}, {params}")
         r = self.notary.add_request(event_id, value_sats, nonce)
         rhash = r['rhash']
-        raise web.HTTPFound('/notary/status?rhash=' + rhash)
+        raise web.HTTPFound('/n/status?r=' + rhash)
 
     async def get_status(self, request):
         print("get_status", request)

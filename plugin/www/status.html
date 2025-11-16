@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
-    <title>Nostr Proof-of-burn</title>
+    <title>Nostr Proof-of-Burn</title>
     <script type="text/javascript" charset="utf-8" src="vendor/jquery-3.4.1.min.js"></script>
     <script type="text/javascript" src="vendor/jquery-ui.min.js"></script>
     <link rel="stylesheet" type="text/css"
@@ -75,11 +75,12 @@
 </head>
 <body>
   <div style="width:50em; margin:auto; font-family:arial, serif;">
-    <h3>Proof-of-burn status</h3>
+    <h3>Proof-of-burn request status</h3>
       <div id="status"></div>
       <iframe id="frame" height="900" width="500" hidden="true" frameBorder="0"></iframe>
       <pre id="proof" hidden="true"></pre>
-      <a id="link" hidden="true">View on block explorer</a>
+      <a id="txlink" hidden="true">View notarization transaction</a><br/>
+      <a id="nevent" hidden="true">View upvoting event</a>
     </div>
     <script type="text/javascript">
 
@@ -96,11 +97,11 @@ function getUrlParameter(sParam)
         }
     }
 }
-var rhash = getUrlParameter('rhash');
+var rhash = getUrlParameter('r');
 
 if (rhash) {
-    var wss_address = (document.URL.startsWith("https") ? "wss" : "ws") + "://" + window.location.host +"/notary/get_status?" + rhash;
-    var payserver_address = (document.URL.startsWith("https") ? "https" : "http") + "://" + window.location.host +"/payserver/pay?id=" + rhash;
+    var wss_address = (document.URL.startsWith("https") ? "wss" : "ws") + "://" + window.location.host +"/n/get_status?" + rhash;
+    var payserver_address = (document.URL.startsWith("https") ? "https" : "http") + "://" + window.location.host +"/p/pay?id=" + rhash;
     $("#frame").attr('src', payserver_address);
     console.log("Opening WSS: " + wss_address);
     var ws = new WebSocket(wss_address);
@@ -120,13 +121,16 @@ if (rhash) {
 	  else{
 	      $("#frame").hide();
 	      result = JSON.stringify(data, undefined, 2);
-	      url = 'https://mempool.emzy.de/tx/' + data.txid;
 	      $("#status").show();
 	      $("#status").html('Proof received');
 	      $("#proof").show();
 	      $("#proof").text(result);
-	      $("#link").show();
-	      $("#link").attr('href', url);
+	      url = 'https://mempool.emzy.de/tx/' + data.txid;
+	      $("#txlink").show();
+	      $("#txlink").attr('href', url);
+	      url = 'https://njump.me/' + data.upvoting_event;
+	      $("#nevent").show();
+	      $("#nevent").attr('href', url);
 	  }
       }
       ws.onerror = function () {

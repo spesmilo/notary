@@ -39,6 +39,7 @@ from contextlib import asynccontextmanager
 
 import electrum_ecc as ecc
 import electrum_aionostr as aionostr
+from electrum_aionostr.util import to_nip19
 
 from electrum.util import log_exceptions, ignore_exceptions, MyEncoder, UserFacingException
 from electrum.invoices import PR_PAID
@@ -381,7 +382,7 @@ class Notary(Logger):
             r["upvoter_pubkey"] = request.upvoter_pubkey.hex()
             r["upvoter_signature"] = request.upvoter_signature.hex()
         if request.upvoting_event_id:
-            r["upvoting_event_id"] = request.upvoting_event_id.hex()
+            r["upvoting_event"] = to_nip19('nevent', request.upvoting_event_id.hex())
         return r
 
     def create_tree(self, requests)-> Dict[int, dict]:
