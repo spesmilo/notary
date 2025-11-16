@@ -105,7 +105,6 @@ class NotaryServer(Logger):
         raise web.HTTPFound('/n/status?r=' + rhash)
 
     async def get_status(self, request):
-        print("get_status", request)
         rhash = request.query_string
         ws = web.WebSocketResponse()
         await ws.prepare(request)
@@ -113,18 +112,24 @@ class NotaryServer(Logger):
             try:
                 proof = self.notary.get_proof(rhash)
             except WaitingForPayment:
-                await ws.send_json({"waiting":True})
-                await asyncio.sleep(1)
-                continue
+                r = {"waiting": True}
             except UserFacingException as e:
-                await ws.send_json({"error":str(e)})
+                r = {"error": str(e)}
+            else:
+                r = proof
+            try:
+                await ws.send_json(r)
+            except Exception as e:
+                self.logger.info(f'{str(e)}')
+                break
+            block_height = r.get('block_height')
+            if block_height is None:
                 await asyncio.sleep(1)
-                continue
-            await ws.send_json(proof)
-            if proof.get('block_height') == 0:
+            elif block_height == 0:
                 await asyncio.sleep(10)
-                continue
             else:
                 break
+            continue
+
         await ws.close()
         return ws
