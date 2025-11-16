@@ -2,6 +2,7 @@
 <html>
   <head>
     <meta charset="utf-8">
+    <title>Nostr Proof-of-Burn</title>
     <style type="text/css">
       body {
 	  font-family: Arial;
@@ -16,23 +17,33 @@
   </head>
   <body>
     <div style="width:30em; margin:auto;">
-      <h3>Request Proof-of-burn</h3>
-      <form method=POST action=/notary/request>
-	<input type="text" name="event_id" placeholder="nostr event ID" pattern="[0-9a-fA-F]{64}" title="32 bytes hexadecimal"><br>
-	<input type="number" min="1" name="value_sats" placeholder="amount to burn (satoshis)"><br/>
+      <h3>Nostr Proof-of-Burn</h3>
+      <form method=POST action="/n/request">
+	<input type="text" name="event_id" placeholder="Event ID" pattern="[0-9a-fA-F]{64}" title="32 bytes hexadecimal"><br>
+	<input type="number" min="1" name="value_sats" placeholder="Amount to burn (sats)"><br/>
 	<input type='hidden' id='nonce' name='nonce' value='5' />
-	<input type="submit" value="Create invoice">
+	<input type="submit" value="Submit">
       </form>
       <h3>What is this?</h3>
-      <p>This page lets you create Proof-of-burn for Nostr events.  It
-	sends a request to a notary, who will return a Lightning
-	invoice for the requested amount to burn (plus notary fees).
-	Once the invoice is paid, the notary will add the event ID to
-	a Merkle Sum tree, and commit the root hash to the Bitcoin
-	blockchain.
+      <p>This page demonstrates the creation of Proof-of-Burn for
+	Nostr events. Enter an event ID and an amount to burn, and the
+	notary will return a Lightning invoice for that amount (plus
+	notary fees). Once the invoice is paid, the notary will add
+	the event ID to a Merkle tree, and commit the root hash to the
+	Bitcoin blockchain.
       </p>
       <p>
-	Read the <a href="proof-of-burn.pdf">whitepaper</a> for more information.
+	Read the <a href="n/proof-of-burn.pdf">whitepaper</a> for more information.
+      </p>
+      <h3>Are the coins really burnt?</h3>
+      <p>Not really. The coins are sent to a Bitcoin address from
+	which anyone can spend after a delay. This puts the Bitcoin
+	miners in a position to claim the funds first. However, as
+	long as they have not figured it out, really anyone can claim
+	these funds. In addition, the notary will subsidize any
+	transaction that burns less than 330 sats. Thus, as long as
+	there is not much traffic, you can actually steal sats from
+	this service. Enjoy!
       </p>
     </div>
   </body>
