@@ -104,6 +104,7 @@ class NotarizationRequest(StoredObject):
     rhash             = attr.ib(type=bytes, converter=hex_to_bytes)
     confirmed_txid    = attr.ib(type=bool)
     txids = attr.ib(type=str) # unconfirmed, sequence
+    upvoting_event_id = attr.ib(type=bytes, converter=hex_to_bytes)
 
     def leaf_hash(self):
         return leaf_hash(self.event_id, self.value_msats, self.nonce, self.upvoter_pubkey)
@@ -237,6 +238,7 @@ class Notary(Logger):
             rhash          = None,
             confirmed_txid = None,
             txids          = "",
+            upvoting_event_id = None,
         )
         leaf_h = request.leaf_hash()
         if upvoter_pubkey:
@@ -378,6 +380,8 @@ class Notary(Logger):
         if request.upvoter_pubkey:
             r["upvoter_pubkey"] = request.upvoter_pubkey.hex()
             r["upvoter_signature"] = request.upvoter_signature.hex()
+        if request.upvoting_event_id:
+            r["upvoting_event_id"] = request.upvoting_event_id.hex()
         return r
 
     def create_tree(self, requests)-> Dict[int, dict]:
@@ -399,6 +403,7 @@ class Notary(Logger):
                 value_msats  = subsidy,
                 confirmed_txid = None,
                 txids      = "",
+                upvoting_event_id = None,
             )
             requests.append(r)
         requests = sorted(requests, key=lambda x: -x.value_msats)
@@ -651,6 +656,7 @@ class Notary(Logger):
                 tags=tags,
                 content="",
                 private_key=self.nostr_privkey)
+            request.upvoting_event_id = bytes.fromhex(event_id)
             self.logger.info(f"published proof: {rhash_hex}")
         except asyncio.TimeoutError as e:
             self.logger.info(f"failed to publish proof: {rhash_hex}")
