@@ -39,7 +39,8 @@ class NotaryServer(Logger):
         app.add_routes([web.post(self.root + '/api/get_proof', self.get_proof)])
         app.add_routes([web.post(self.root + '/api/verify_proof', self.verify_proof)])
         app.add_routes([web.post(self.root + '/api/add_request', self.add_request)])
-        app.add_routes([web.post(self.root + '/request', self.new_request)]) # http
+        app.add_routes([web.post(self.root + '/request', self.add_web_request)]) # http
+        app.add_routes([web.post(self.root + '/api/add_zap_request', self.add_zap_request)]) # json
         app.add_routes([web.get(self.root + '/get_status', self.get_status)]) # wss
         app.add_routes([web.static(self.root, self.WWW_DIR)])
         runner = web.AppRunner(app)
@@ -49,6 +50,7 @@ class NotaryServer(Logger):
         self.logger.info(f"notary server is listening on port {self.port}")
 
     async def add_request(self, request):
+        # returns invoice, rhash
         params = await request.json()
         try:
             event_id = bytes.fromhex(params['event_id'])
@@ -90,7 +92,7 @@ class NotaryServer(Logger):
         #    raise web.HTTPUnsupportedMediaType()
         return web.json_response(result)
 
-    async def new_request(self, request):
+    async def add_web_request(self, request):
         params = await request.post()
         try:
             event_id = bytes.fromhex(params['event_id'])
@@ -103,6 +105,22 @@ class NotaryServer(Logger):
         r = self.notary.add_request(event_id, value_sats, nonce)
         rhash = r['rhash']
         raise web.HTTPFound('/n/status?r=' + rhash)
+
+    @log_exceptions
+    async def add_zap_request(self, r):
+        params = await r.json()
+        try:
+            amount_msats = int(params['amount_msats'])
+            #comment = params['comment']
+            #metadata = params['metadata'] # fixme: add it
+            event_id = bytes.fromhex(params['event_id'])
+        except Exception as e:
+            self.logger.info(f"{r}, {params}, {e}")
+            raise web.HTTPUnsupportedMediaType()
+        value_sats = amount_msats // 1000
+        nonce = os.urandom(32) # fixme
+        r = self.notary.add_request_by_total(event_id, value_sats, nonce)
+        return web.json_response(r)
 
     async def get_status(self, request):
         rhash = request.query_string

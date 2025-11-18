@@ -209,6 +209,7 @@ class Notary(Logger):
 
 
     def notary_fee(self, amount_sat):
+        return 0
         if amount_sat <= 8:
             return amount_sat
         elif amount_sat <= 32:
@@ -217,6 +218,11 @@ class Notary(Logger):
             return amount_sat // 4
         else:
             return amount_sat // 8
+
+    def reverse_notary_fee(self, total_sat):
+        amount_sat = total_sat
+        assert self.notary_fee(amount_sat) + amount_sat == total_sat
+        return amount_sat
 
     def verify_signature(self, leaf_h, upvoter_pubkey, upvoter_signature):
         try:
@@ -227,6 +233,10 @@ class Notary(Logger):
             pk.schnorr_verify(upvoter_signature, leaf_h)
         except Exception as e:
             raise UserFacingException('incorrect signature')
+
+    def add_request_by_total(self, event_id: bytes, total_amount:int, nonce: bytes, event_pubkey:bytes = None, upvoter_pubkey: bytes=None, upvoter_signature:bytes = None):
+        value_sats = self.reverse_notary_fee(total_amount)
+        return self.add_request(event_id, value_sats, nonce, event_pubkey=event_pubkey, upvoter_pubkey=upvoter_pubkey, upvoter_signature=upvoter_signature)
 
     def add_request(self, event_id: bytes, value_sats:int, nonce: bytes, event_pubkey:bytes = None, upvoter_pubkey: bytes=None, upvoter_signature:bytes = None):
         request = NotarizationRequest(
