@@ -206,6 +206,7 @@ class Notary(Logger):
         self.logger.info(f'nostr pubkey: {self.nostr_pubkey}')
         self.publish_queue = asyncio.Queue()
         self.last_time = 0
+        self.summary = None
 
     def notary_fee(self, x):
         if x <= 8:
@@ -248,7 +249,7 @@ class Notary(Logger):
             fee_msats = 500
         else:
             value_msats = 1000 * self.reverse_notary_fee(total_sats)
-            fee_msats = 1000 * (total_sats - value_sats)
+            fee_msats = 1000 * total_sats - value_msats
         return self._add_request(event_id, value_msats, fee_msats, nonce, event_pubkey=event_pubkey, upvoter_pubkey=upvoter_pubkey, upvoter_signature=upvoter_signature)
 
     def add_request(self, event_id: bytes, value_sats:int, nonce: bytes, event_pubkey:bytes = None, upvoter_pubkey: bytes=None, upvoter_signature:bytes = None):
@@ -696,6 +697,33 @@ class Notary(Logger):
             self.logger.info(f"failed to publish proof: {rhash_hex}")
             return
 
+    async def publish_summary(self, txid, requests, relay_manager):
+        # the first value of a single letter tag is indexed and can be filtered for
+        if constants.net != constants.BitcoinMainnet:
+            return
+        tags = []
+        url = 'https://mempool.emzy.de/tx/' + txid
+        content = f'Notarized {len(requests)} events in {url}'
+        for r in requests:
+            tags.append(['e', r.event_id.hex()])
+            if r.upvoting_event_id:
+                nevent = to_nip19('nevent', r.upvoting_event_id.hex())
+                content += '\n' + 'https://njump.me/' + nevent
+
+        tags.append(['expiration', str(int(time.time()) + 3600)])
+
+        try:
+            event_id = await aionostr._add_event(
+                relay_manager,
+                kind=1,
+                tags=tags,
+                content=content,
+                private_key=self.nostr_privkey)
+            self.logger.info(f"published summary: {event_id}")
+        except asyncio.TimeoutError as e:
+            self.logger.info(f"failed to publish summary")
+            return
+
     @asynccontextmanager
     async def nostr_manager(self):
         manager_logger = self.logger.getChild('aionostr')
@@ -718,6 +746,10 @@ class Notary(Logger):
             while True:
                 request = await self.publish_queue.get()
                 await self.publish_proof(request, relay_manager)
+                if self.publish_queue.empty() and self.summary:
+                    txid, requests = self.summary
+                    await self.publish_summary(txid, requests, relay_manager)
+                    self.summary = None
 
     @log_exceptions
     async def retrieve_proofs(self):
@@ -755,14 +787,18 @@ class Notary(Logger):
             csv_delay = self.config.NOTARY_CSV_DELAY
             tx = self.create_tx(tree, csv_delay)
             txid = tx.txid()
-            print(f'new tx: {txid}')
+            self.logger.info(f'new tx: {txid}')
             self.save_proofs(tree, requests, txid, csv_delay)
             self.mempool[txid] = indices, tx
             self.db.put('last_txid', txid)
             self.db.write()
             #self.wallet.save_db()
             if not await self.wallet.network.try_broadcasting(tx, 'level'):
-                print('could not broadcast tx', tx.txid())
+                self.logger.info(f'could not broadcast tx {tx.txid()}')
+                self.summary = None
+            else:
+                self.summary = tx.txid(), requests
+
             for r in requests:
                 self.publish_queue.put_nowait(r)
 
