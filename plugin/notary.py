@@ -229,7 +229,7 @@ class Notary(Logger):
         f = self.notary_fee(x)
         assert x + f <= y + 1, y
         assert x + f >= y, y
-        return x
+        return y - f #x
 
     def verify_signature(self, leaf_h, upvoter_pubkey, upvoter_signature):
         try:
@@ -241,15 +241,27 @@ class Notary(Logger):
         except Exception as e:
             raise UserFacingException('incorrect signature')
 
-    def add_request_by_total(self, event_id: bytes, total_amount:int, nonce: bytes, event_pubkey:bytes = None, upvoter_pubkey: bytes=None, upvoter_signature:bytes = None):
-        value_sats = self.reverse_notary_fee(total_amount)
-        return self.add_request(event_id, value_sats, nonce, event_pubkey=event_pubkey, upvoter_pubkey=upvoter_pubkey, upvoter_signature=upvoter_signature)
+    def add_request_by_total(self, event_id: bytes, total_sats:int, nonce: bytes, event_pubkey:bytes = None, upvoter_pubkey: bytes=None, upvoter_signature:bytes = None):
+        # I want to pay x -> invoice x
+        if total_sats == 1:
+            value_msats = 500
+            fee_msats = 500
+        else:
+            value_msats = 1000 * self.reverse_notary_fee(total_sats)
+            fee_msats = 1000 * (total_sats - value_sats)
+        return self._add_request(event_id, value_msats, fee_msats, nonce, event_pubkey=event_pubkey, upvoter_pubkey=upvoter_pubkey, upvoter_signature=upvoter_signature)
 
     def add_request(self, event_id: bytes, value_sats:int, nonce: bytes, event_pubkey:bytes = None, upvoter_pubkey: bytes=None, upvoter_signature:bytes = None):
+        # I want to burn x -> min fee for burning x
+        fee_msats = 1000 * self.notary_fee(value_sats)
+        value_msats = 1000 * value_sats
+        return self._add_request(event_id, value_msats, fee_msats, nonce, event_pubkey=event_pubkey, upvoter_pubkey=upvoter_pubkey, upvoter_signature=upvoter_signature)
+
+    def _add_request(self, event_id: bytes, value_msats:int, fee_msats: int, nonce: bytes, event_pubkey:bytes = None, upvoter_pubkey: bytes=None, upvoter_signature:bytes = None):
         request = NotarizationRequest(
             event_id       = event_id,
             event_pubkey   = event_pubkey,
-            value_msats    = value_sats * 1000,
+            value_msats    = value_msats,
             nonce          = nonce,
             upvoter_pubkey     = upvoter_pubkey,
             upvoter_signature  = upvoter_signature,
@@ -262,8 +274,12 @@ class Notary(Logger):
         if upvoter_pubkey:
             self.verify_signature(leaf_h, upvoter_pubkey, upvoter_signature)
         # payment request for the notary
-        total_amount = value_sats + self.notary_fee(value_sats)
-        req_key = self.wallet.create_request(amount_sat=total_amount, exp_delay=3600, message="Proof-of-burn", address=None)
+        total_sats = (value_msats + fee_msats) // 1000
+        if value_msats < 1000:
+            message = 'Nostr proof-of-burn %d millisats'%(value_msats)
+        else:
+            message = 'Nostr proof-of-burn %d sats'%(value_msats// 1000)
+        req_key = self.wallet.create_request(amount_sat=total_sats, exp_delay=3600, message=message, address=None)
         payment_request = self.wallet.get_request(req_key)
         request.rhash = payment_request.payment_hash
         self.requests[req_key] = request
