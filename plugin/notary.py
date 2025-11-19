@@ -207,22 +207,29 @@ class Notary(Logger):
         self.publish_queue = asyncio.Queue()
         self.last_time = 0
 
-
-    def notary_fee(self, amount_sat):
-        return 0
-        if amount_sat <= 8:
-            return amount_sat
-        elif amount_sat <= 32:
-            return amount_sat // 2
-        elif amount_sat <= 256:
-            return amount_sat // 4
+    def notary_fee(self, x):
+        if x <= 8:
+            return x       # y = x + x
+        elif x <= 32:
+            return x // 2  # y =  x + x / 2 = x * 3 /2
+        elif x <= 256:
+            return x // 4  # y = x + x / 4 = x * 5 / 4
         else:
-            return amount_sat // 8
+            return x // 8  # y = x + x / 8
 
-    def reverse_notary_fee(self, total_sat):
-        amount_sat = total_sat
-        assert self.notary_fee(amount_sat) + amount_sat == total_sat
-        return amount_sat
+    def reverse_notary_fee(self, y):
+        if y <= 16:
+            x = round_up_division(y, 2)
+        elif y <= 32 + 16:
+            x = round_up_division(y * 2, 3)
+        elif y <= 256 + 64:
+            x = round_up_division(y * 4, 5)
+        else:
+            x = round_up_division(y * 8, 9)
+        f = self.notary_fee(x)
+        assert x + f <= y + 1, y
+        assert x + f >= y, y
+        return x
 
     def verify_signature(self, leaf_h, upvoter_pubkey, upvoter_signature):
         try:
