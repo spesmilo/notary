@@ -492,9 +492,14 @@ class Notary(Logger):
 
         return tree
 
+    def get_processed_requests(self):
+        requests = self.requests.values()
+        def is_processed(request):
+            return bool(request.confirmed_txid)
+        return list(filter(is_processed, requests))
+
     def get_unprocessed_requests(self):
         requests = self.requests.values()
-        # filter requests that are already in our forest
         def is_not_processed(request):
             return request.confirmed_txid is None
         requests = list(filter(is_not_processed, requests))
@@ -692,9 +697,9 @@ class Notary(Logger):
                 content="",
                 private_key=self.nostr_privkey)
             request.upvoting_event_id = bytes.fromhex(event_id)
-            self.logger.info(f"published proof: {rhash_hex}")
+            self.logger.info(f"published proof: {request.event_id.hex()}")
         except asyncio.TimeoutError as e:
-            self.logger.info(f"failed to publish proof: {rhash_hex}")
+            self.logger.info(f"failed to publish proof: {request.event_id.hex()}")
             return
 
     async def publish_summary(self, txid, requests, relay_manager):
@@ -737,12 +742,15 @@ class Notary(Logger):
             yield manager
 
     @log_exceptions
+    async def republish_proofs(self):
+        for r in self.get_processed_requests():
+            self.publish_queue.put_nowait(r)
+
+    @log_exceptions
     async def publish_proofs(self):
         async with self.nostr_manager() as relay_manager:
             await relay_manager.connect()
             self.logger.info(f'nostr is connected')
-            connected_relays = relay_manager.relays
-            print(f'connected relays: {[relay.url for relay in connected_relays]}')
             while True:
                 request = await self.publish_queue.get()
                 await self.publish_proof(request, relay_manager)
@@ -768,9 +776,9 @@ class Notary(Logger):
                     try:
                         v = await self.verify_proof(proof)
                     except Exception as e:
-                        print(f'failed to verify proof {e} {proof["nonce"]}')
+                        self.logger.info(f'failed to verify proof {e} {proof.get("event_id")}')
                         continue
-                    print(f'verified proof {proof["nonce"]}')
+                    self.logger.info(f'verified proof {proof["event_id"]}')
 
     @log_exceptions
     async def run(self):

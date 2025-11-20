@@ -50,3 +50,9 @@ async def sweep(self: 'Commands', txid: str, wallet: 'Abstract_Wallet' = None, p
     arg:str:txid:txid of the notarization transaction
     """
     return await plugin.notary.sweep(txid)
+
+@plugin_command('wl', plugin_name)
+async def republish_proofs(self: 'Commands', wallet: 'Abstract_Wallet' = None, plugin = None) -> List[dict]:
+    """republish proofs
+    """
+    return await plugin.notary.republish_proofs()
